@@ -1,9 +1,3 @@
----
-editor_options: 
-  markdown: 
-    wrap: sentence
----
-
 # Brief
 
 Create a Quarto Dashboard using open data from OpenAlex which highlights in which journals/venues the three universities KTH, Stockholm University and Karolinska Institutet have most frequently co-published in the last ten years.
