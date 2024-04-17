@@ -1,0 +1,262 @@
+---
+title: "Co-publications"
+format: 
+  dashboard:
+    theme: morph
+    self_contained: true  # Make the dashboard self-contained
+    includes:
+      in_header: |
+        <style>
+          /* Add custom font */
+          @font-face {
+            font-family: 'Nunito Variable';
+            src: url('Nunito_Complete/Fonts/Variable/Nunito-Variable.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+          }
+          /* Apply custom font to body */
+          body {
+            font-family: 'Nunito Variable', sans-serif;
+          }
+        </style>
+---
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+#install.packages("pacman")
+pacman::p_load(quarto, shiny, dplyr, ggplot2, remotes, openalexR, httr, jsonlite, kableExtra, DT, stringr, scales, lubridate, bslib, bsicons)
+```
+
+```{css}
+/*
+@font-face {
+  font-family: 'Nunito Variable';
+  src: url('/kth_exercise/exercise/Nunito_Complete/Fonts/Variable/Nunito-Variable.ttf') format('truetype');
+}
+*/
+
+/* valueboxes */
+.quarto-dashboard .bslib-value-box .value-box-value {
+    font-size: clamp(.1em, 5cqw, 5em)!important;
+}
+
+/* table body */
+.thead, tbody, tfoot, tr, td, th {
+    font-size: 0.8rem!important;
+}
+
+/* table column filters */
+.form-control {
+    padding: 0.5rem 1rem!important;
+    font-size: 0.8rem!important;
+    }
+```
+
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+
+# Source to parameters in the API: https://openalex.org/
+# Fetching data from API
+response <- GET("https://api.openalex.org/works?group_by=primary_location.source.id&filter=publication_year:2014-2024,authorships.institutions.lineage:i161593684,authorships.institutions.lineage:i28166907,authorships.institutions.lineage:i86987016")
+
+my_data <- content(response, as = "text", encoding = "UTF-8") %>%
+    fromJSON()
+
+# Convert to data frame and edit column names
+group_df <- as.data.frame(my_data) %>% 
+  dplyr::select("key_display_name" = group_by.key_display_name, "count" = "group_by.count")
+
+# Cleaning up the key_display_name column which looked a bit messy for some rows and making counts into a numeric
+group_df_clean <- group_df %>% 
+  mutate(key_display_name = trimws(key_display_name, which = "both")) %>% 
+  mutate(key_display_name = gsub('[^\x20-\x7E]', '', key_display_name)) %>% 
+  mutate(count = as.numeric(count))
+
+# Adding some calcualtions
+group_df_plotting <- group_df_clean %>% 
+  group_by(key_display_name) %>% 
+  summarise(count = sum(count)) %>% 
+  ungroup() %>% 
+  mutate(tot = sum(count)) %>% 
+  arrange(count) %>% 
+  mutate(cumulative_count = cumsum(count)) %>%  
+  mutate(cumulative_r = cumulative_count/tot) %>%  
+  mutate(is_top = case_when(cumulative_r >= 0.8 ~ "Yes", TRUE ~"No")) %>%
+  arrange(desc(cumulative_r)) %>% 
+  mutate(cumulative_r = scales::percent(cumulative_r, accuracy = 1)) 
+```
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+
+# Get data for every year
+fetch_and_convert_to_df <- function(year) {
+  # Construct the URL for the API request
+  url2 <- paste0("https://api.openalex.org/works?group_by=primary_location.source.id&filter=publication_year:", year, ",authorships.institutions.lineage:i161593684,authorships.institutions.lineage:i28166907,authorships.institutions.lineage:i86987016")
+  
+  # Fetch the data from the API
+  response2 <- GET(url2)
+  
+    # Parse the JSON data
+    my_time_data <- content(response2, as = "text", encoding = "UTF-8") %>%
+      fromJSON()
+    
+    # Convert to data frame
+    my_time_data <- as.data.frame(my_time_data) %>% 
+      dplyr::select("key_display_name" = group_by.key_display_name, "count" = "group_by.count") %>% 
+      mutate(year = year)
+    
+    # Cleaning up the key_display_name column which looked a bit messy for some rows and making counts into a numeric
+    my_time_data <- my_time_data %>% 
+      mutate(key_display_name = trimws(key_display_name, which = "both")) %>% 
+      mutate(key_display_name = gsub('[^\x20-\x7E]', '', key_display_name)) %>% 
+      mutate(count = as.numeric(count))
+
+   # Adding some calcualtions
+    my_clean_data <- my_time_data %>% 
+      group_by(year, key_display_name) %>% 
+      summarise(count = sum(count)) %>% 
+      ungroup() %>% 
+      mutate(tot = sum(count)) %>% 
+      arrange(count) %>% 
+      mutate(cumulative_count = cumsum(count)) %>%  
+      mutate(cumulative_r = cumulative_count/tot) %>%  
+      arrange(desc(cumulative_r)) %>% 
+      mutate(cumulative_r = scales::percent(cumulative_r, accuracy = 1)) 
+    
+    return(my_clean_data)
+}
+
+
+# Loop over each year since 2014 and fetch data
+
+# Initialize an empty list to store data frames for each year
+dfs <- list()
+
+# Loop over each year since 2014
+for (year in 2014:as.numeric(format(Sys.Date(), "%Y"))) {
+  # Fetch and process data for the current year
+  df <- fetch_and_convert_to_df(year)
+  
+  # Check if data was fetched successfully
+  if (!is.null(df)) {
+    # Append the data frame to the list
+    dfs[[length(dfs) + 1]] <- df
+  }
+}
+
+# Combine all data frames into a single data frame
+all_years_df <- do.call(rbind, dfs) %>% 
+  mutate(is_top = case_when(key_display_name %in% pull(group_df_plotting %>% filter(is_top == "Yes") %>% distinct(key_display_name)) ~ "Yes", TRUE ~ "No"))
+  
+```
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+
+my_colours <- c("#3488f3", "#DC8EFF", "#43cc29", "#f6c95d", "#AFE6FF", "#00508C", "#FF009B", "#AF00FF", "#FFADD2", "#9CFFD2", "#FFFF00", "#FFFF9A", "#E1BE61", "#383C4B")
+
+my_theme <- theme(
+  text = element_text(family = "Nunito Variable"),
+  legend.position = "top",
+  legend.title = element_blank(),
+  axis.ticks = element_blank(),
+  axis.text.x = element_text(size = 12),
+  axis.text.y = element_text(size = 12),
+  plot.title = element_text(hjust = 0.5, size = 18),
+  panel.grid.major = element_line(color = "grey", size = 0.1),
+  panel.grid.minor = element_blank(),
+  legend.background = element_rect(fill = "#e4ebf5", color = "#e4ebf5"),
+  plot.background = element_rect(fill = "#e4ebf5", color = "#e4ebf5"),
+  panel.background = element_rect(fill = "#e4ebf5", color = "#e4ebf5")
+        )
+```
+
+#  {.sidebar}
+
+Data from OpenAlex which highlights in which journals/venues the three universities KTH, Stockholm University and Karolinska Institutet have most frequently co-published in the last ten years.
+
+# Home
+
+## Rows {height="20%"}
+
+```{r}
+#| content: valuebox
+#| title: "Total co-publications"
+
+list(
+  icon = "bar-chart",
+  color = "primary",
+  value = max(group_df_plotting$tot)
+)
+```
+
+```{r}
+#| content: valuebox
+#| title: "No. of Journals"
+
+list(
+  icon = "book",
+  color = "warning",
+  value = length(group_df_plotting$key_display_name)
+)
+```
+
+```{r}
+#| content: valuebox
+#| title: "Top Journal"
+
+list(
+  icon = "trophy",
+  color = "success",
+  value = group_df_plotting %>% 
+    arrange(desc(count)) %>% 
+    slice_head(., n = 1) %>% 
+    distinct(key_display_name) %>% 
+    pull(.)
+)
+```
+
+## Rows {height="80%"}
+
+```{r, title = "Journals Ranked", echo = FALSE, message=FALSE, warning=FALSE}
+
+group_df_plotting %>% 
+  dplyr::select(-c(cumulative_count, tot)) %>% 
+  dplyr::rename("Journals/venues" = key_display_name,
+                "Count of publications" = count,
+                "Cumulative Share" = cumulative_r,
+                "Driving 80% of co-publ." = is_top) %>% 
+  #head(10) %>% 
+  DT::datatable(rownames = TRUE, filter = 'top', options = list(dom = 'tip',
+                                                                autoWidth = F,
+                                                                scrollX=T,
+                                                                pageLength = length(group_df_plotting$key_display_name)
+                                                                
+                                                                  )) %>% 
+  DT::formatStyle(2, color = "#62a0f6")
+
+```
+
+```{r, title = "Development Over Time", echo = FALSE, message=FALSE, warning=FALSE, fig.height=8}
+all_years_plot_df <- all_years_df %>% 
+  #filter(is_top == "Yes") %>% 
+  mutate(year = as.Date(paste0(year, "-01-01"))) %>% 
+  mutate(category = case_when(is_top == "Yes" ~ key_display_name, TRUE ~ "Others")) %>% 
+  group_by(year, category) %>% 
+  summarise(count = sum(count)) %>% 
+  group_by(year) %>% 
+  mutate(r = count/sum(count)) %>% 
+  mutate(category = factor(category, levels = c(pull(group_df_plotting %>% filter(is_top == "Yes") %>% distinct(key_display_name)),"Others")))
+  
+# the plot
+all_years_plot_df %>% 
+  ggplot(aes(x = year, y = count, fill = category)) +
+  geom_col(show.legend = T) +
+  geom_text(aes(label = scales::percent(r, accuracy = 1)), position = position_stack(vjust = .5))+
+  scale_fill_manual(values = my_colours) +
+  scale_y_continuous(expand = expansion(mult = c(0,0)))+
+  #scale_x_continuous(expand = expansion(mult = c(0,0)))+
+  scale_x_date(breaks = seq(min(all_years_plot_df$year), max(all_years_plot_df$year), by="1 year"), date_labels = "%Y", expand = expansion(mult = c(0,0)))+
+  labs(x = NULL, y = "count", title = "Counts of Co-publication")+
+  guides(fill = guide_legend(ncol = 2))+
+  my_theme
+
+```

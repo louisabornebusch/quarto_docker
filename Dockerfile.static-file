@@ -1,0 +1,19 @@
+FROM louiborn/r2u-quarto:20.04 AS builder
+
+COPY static-file /app
+WORKDIR /app
+RUN mkdir output
+RUN quarto render index.qmd
+RUN rm index.qmd
+
+FROM ghcr.io/openfaas/of-watchdog:0.9.6 AS watchdog
+
+FROM alpine:latest
+RUN mkdir /app
+COPY --from=builder /app /app
+COPY --from=watchdog /fwatchdog .
+COPY Nunito_Complete/Fonts /usr/share/fonts/Nunito_Complete
+ENV mode="static"
+ENV static_path="/app"
+HEALTHCHECK --interval=3s CMD [ -e /tmp/.lock ] || exit 1
+CMD ["./fwatchdog"]
